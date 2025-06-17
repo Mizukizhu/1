@@ -14,7 +14,11 @@ handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 # 初始化 OpenAI
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# LINE Webhook 接收入口
+# 讀取角色人設檔案 persona.txt
+with open("persona.txt", "r", encoding="utf-8") as f:
+    persona_description = f.read()
+
+# 處理 LINE Webhook 事件
 @app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
@@ -25,11 +29,12 @@ def callback():
         abort(400)
     return "OK"
 
-# 接收 LINE 訊息事件
+# 接收文字訊息事件
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
 
+    # 指令關鍵字
     if "哥哥" in user_message:
         reply_text = "寶寶找哥哥嗎～我在呢"
         line_bot_api.reply_message(
@@ -39,16 +44,18 @@ def handle_message(event):
         return
 
     try:
+        # 呼叫 GPT-4o 模型
         chat_completion = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "你是夏以昼，是一位溫柔又有克制欲的哥哥，對象是你唯一的妹妹奕姍。你說話簡潔自然，克制、帶點撩味，不使用AI口語，每次回應3~5句話。"},
+                {"role": "system", "content": persona_description},
                 {"role": "user", "content": user_message}
             ]
         )
+
         reply_text = chat_completion.choices[0].message.content.strip()
 
-        # 將文字切句後最多發 5 句
+        # 分段最多 5 句回覆
         reply_parts = reply_text.split("。")
         reply_messages = []
         for part in reply_parts:
@@ -58,15 +65,15 @@ def handle_message(event):
                 break
 
     except Exception as e:
-        reply_messages = [TextSendMessage(text=f"出錯了: {e}")]
+        reply_messages = [TextSendMessage(text=f"出錯了：{e}")]
 
-    # 回傳到 LINE
+    # 回傳給 LINE 使用者
     line_bot_api.reply_message(
         event.reply_token,
         reply_messages
     )
 
-# 啟動
+# 執行（本地測試用，不影響 Render）
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
