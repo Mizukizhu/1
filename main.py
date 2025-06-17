@@ -30,9 +30,5 @@ def handle_message(event):
         reply = "你說什麼我都聽著呢"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-if __name__ == "__main__":
-    app.run()
-if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+   if __name__ == "__main__":
+    print("Use gunicorn to run this app instead.")
