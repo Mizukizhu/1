@@ -15,7 +15,7 @@ handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # 處理 LINE Webhook 事件
-@app.route("/callback", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
     body = request.get_data(as_text=True)
