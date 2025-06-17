@@ -59,5 +59,7 @@ def handle_message(event):
         TextSendMessage(text=reply_text)
     )
 
-# 建議用 gunicorn 執行
-print("Use gunicorn to run this app.")
+     # 建議用 gunicorn 執行
+     if __name__ == "__main__":
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port)
