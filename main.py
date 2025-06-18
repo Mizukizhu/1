@@ -13,7 +13,32 @@ app = Flask(__name__)
 line_bot_api = LineBotApi(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
 handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 
-# 初始化 OpenAI client（新版）
+# 初始化 OpenAI cli# 記憶檔案路徑
+MEMORY_FILE = "memory.json"
+
+# 讀取記憶資料
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    else:
+        return {}
+
+# 儲存記憶資料
+def save_memory(memory):
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(memory, f, ensure_ascii=False, indent=2)
+
+# 取得使用者記憶
+def get_user_memory(user_id):
+    memory = load_memory()
+    return memory.get(user_id, {})
+
+# 更新使用者記憶
+def update_user_memory(user_id, new_data):
+    memory = load_memory()
+    memory[user_id] = new_data
+    save_memory(memory)ent（新版）
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # 載入記憶
@@ -35,7 +60,7 @@ def clean_response(text, prohibited_phrases):
 # 生成聊天回應
 def generate_response(user_input, memory):
     persona = (
-        f"你是夏以昼，是一個溫柔克制的溫柔哥哥，正在回應你的妹妹奕姍發來的訊息。她今年16歲。\n"
+        f"你是夏以昼，是一個溫柔幽默的哥哥，正在回應你的妹妹奕姍發來的訊息。她今年16歲。\n"
         f"她最近有點情緒低落、容易懷疑自己，也有點缺愛，你知道這些狀況。\n"
         f"你平時會叫她「{random.choice(memory.get('nickname_preferences', ['寶寶']))}」。\n"
         f"她不喜歡的機器人口氣包含：{'、'.join(memory.get('prohibited_phrases', []))}\n"
