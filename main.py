@@ -4,68 +4,91 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import openai
 import os
+import json
 
 app = Flask(__name__)
 
-# 初始化 LINE Bot
+# LINE Bot 初始化
 line_bot_api = LineBotApi(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
 handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 
-# 初始化 OpenAI
+# OpenAI 初始化
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# 讀取角色人設
+# 記憶檔案與人設檔案
+MEMORY_FILE = "memory.json"
+PERSONA_FILE = "persona.txt"
+
+# 讀取人設檔案
 def load_persona():
     try:
-        with open("persona.txt", "r", encoding="utf-8") as f:
+        with open(PERSONA_FILE, "r", encoding="utf-8") as f:
             return f.read()
-    except FileNotFoundError:
-        return ""
+    except:
+        return "你是夏以昼，一位溫柔克制的哥哥，對妹妹奕姍有強烈保護欲。"
 
-# 處理 LINE Webhook 事件
+# 讀取對話記憶
+def load_memory():
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+# 儲存對話記憶
+def save_memory(memory):
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(memory, f, ensure_ascii=False, indent=2)
+
+# LINE webhook 路由
 @app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
     body = request.get_data(as_text=True)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
     return "OK"
 
-# 接收文字訊息事件（純 GPT 回覆）
+# 處理訊息事件
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
 
+    # 讀取人設與記憶
+    persona = load_persona()
+    memory = load_memory()
+
+    # 新增使用者輸入
+    memory.append({"role": "user", "content": user_message})
+    if len(memory) > 20:
+        memory = memory[-20:]  # 最多保留 20 條記憶
+
     try:
-        # 呼叫 GPT-4o 並帶入角色人設
-        persona = load_persona()
+        # 呼叫 GPT-4o
         chat_completion = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": persona},
-                {"role": "user", "content": user_message}
+                *memory
             ]
         )
-        reply_text = chat_completion.choices[0].message.content.strip()
 
-        # 分段回覆（最多五段）
-        reply_parts = reply_text.split("。")
-        reply_messages = []
-        for part in reply_parts:
-            if part.strip():
-                reply_messages.append(TextSendMessage(text=part.strip() + "。"))
-            if len(reply_messages) >= 5:
-                break
+        reply_text = chat_completion.choices[0].message.content.strip()
+        memory.append({"role": "assistant", "content": reply_text})
+        save_memory(memory)
 
     except Exception as e:
-        reply_messages = [TextSendMessage(text=f"出錯了：{e}")]
+        reply_text = f"出錯了：{e}"
 
-    line_bot_api.reply_message(event.reply_token, reply_messages)
+    # 傳回 LINE
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
+    )
 
-# 本地測試用
+# 開發測試用
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
