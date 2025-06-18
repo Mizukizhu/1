@@ -15,16 +15,15 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
-# 初始化
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 openai.api_key = OPENAI_API_KEY
 
-# 記憶參數
-MEMORY_FILE = 'user_memory.json'
-MAX_MEMORY = 30  # 可修改記憶條數限制
+MEMORY_FILE = "memory.json"
+MAX_MEMORY = 30  # 每位用戶記憶上限句數
 
-@app.route("/webhook", methods=['POST'])
+# Webhook 路由
+@app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
@@ -33,52 +32,58 @@ def callback():
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
+    return "OK"
 
-    return 'OK'
-
+# 接收訊息事件
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_id = event.source.user_id
     user_input = event.message.text.strip()
 
-    # 載入對話記憶
+    # 載入記憶
     memory = load_user_memory(user_id, MEMORY_FILE)
 
-    # 新訊息加入記憶（對話格式為角色扮演）
+    # 儲存使用者輸入
     memory.append({"role": "user", "content": user_input})
 
-    # 組合人設與記憶
+    # 載入角色人設
     with open("persona.txt", "r", encoding="utf-8") as f:
         persona = f.read()
 
+    # 組成訊息陣列
     messages = [{"role": "system", "content": persona}] + memory
 
-    # 呼叫 GPT 模型
     try:
+        # GPT-4o 呼叫
         response = openai.ChatCompletion.create(
-            model="gpt-4o",  # 可改為你指定的模型
+            model="gpt-4o",
             messages=messages,
             max_tokens=1000,
-            temperature=0.8,
+            temperature=0.8
         )
+
         reply_text = response.choices[0].message.content.strip()
 
-        # 自動斷句成 3～5 句訊息
-        replies = reply_text.split("\n")
-        replies = [line.strip() for line in replies if line.strip()]
+        # 拆句，隨機取 3~5 句
+        replies = [line.strip() for line in reply_text.split("\n") if line.strip()]
         random.shuffle(replies)
         replies = replies[:random.randint(3, 5)]
         reply_messages = [TextSendMessage(text=line) for line in replies]
 
-        # 儲存記憶
+        # 儲存 AI 回覆
         memory.append({"role": "assistant", "content": reply_text})
         save_user_memory(user_id, memory, MEMORY_FILE, max_memory=MAX_MEMORY)
 
-        # 回傳訊息
+        # 回覆
         line_bot_api.reply_message(event.reply_token, reply_messages)
 
     except Exception as e:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="哥哥這邊壞掉了，等等再來找我好不好～"))
+        import traceback
+        traceback.print_exc()
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="哥哥出錯了嗚嗚…\n" + str(e))
+        )
 
 if __name__ == "__main__":
     app.run()
