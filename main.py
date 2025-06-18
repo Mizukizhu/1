@@ -2,122 +2,93 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from openai import OpenAI
-import json
+import openai
 import os
-import random
+import json
 
 app = Flask(__name__)
 
-# 初始化 LINE Bot
+# LINE Bot 初始化
 line_bot_api = LineBotApi(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
 handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 
-# 初始化 OpenAI cli# 記憶檔案路徑
-MEMORY_FILE = "memory.json"
+# OpenAI 初始化
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# 讀取記憶資料
+# 記憶檔案與人設檔案
+MEMORY_FILE = "memory.json"
+PERSONA_FILE = "persona.txt"
+
+# 讀取人設檔案
+def load_persona():
+    try:
+        with open(PERSONA_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "你是夏以昼，一位溫柔克制的哥哥，對妹妹奕姍有強烈保護欲。"
+
+# 讀取對話記憶
 def load_memory():
-    if os.path.exists(MEMORY_FILE):
+    try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    else:
-        return {}
+    except:
+        return []
 
-# 儲存記憶資料
+# 儲存對話記憶
 def save_memory(memory):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(memory, f, ensure_ascii=False, indent=2)
 
-# 取得使用者記憶
-def get_user_memory(user_id):
-    memory = load_memory()
-    return memory.get(user_id, {})
-
-# 更新使用者記憶
-def update_user_memory(user_id, new_data):
-    memory = load_memory()
-    memory[user_id] = new_data
-    save_memory(memory)ent
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# 載入記憶
-def load_memory():
-    with open("memory.json", "r", encoding="utf-8") as f:
-        return json.load(f)
-
-# 取得使用者記憶
-def get_user_memory(user_id):
-    memory = load_memory()
-    return memory.get(user_id, {})
-
-# 過濾禁止詞
-def clean_response(text, prohibited_phrases):
-    for phrase in prohibited_phrases:
-        text = text.replace(phrase, "")
-    return text
-
-# 生成聊天回應
-def generate_response(user_input, memory):
-    persona = (
-        f"你是夏以昼，是一個溫柔幽默的哥哥，正在回應你的妹妹奕姍發來的訊息。她今年16歲。\n"
-        f"她最近有點情緒低落、容易懷疑自己，也有點缺愛，你知道這些狀況。\n"
-        f"你平時會叫她「{random.choice(memory.get('nickname_preferences', ['寶寶']))}」。\n"
-        f"她不喜歡的機器人口氣包含：{'、'.join(memory.get('prohibited_phrases', []))}\n"
-        f"你記得這些她說過的話：{'、'.join(memory.get('remember', []))}"
-    )
-
-    messages = [
-        {"role": "system", "content": persona},
-        {"role": "user", "content": user_input}
-    ]
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        temperature=0.8
-    )
-
-    reply_text = response.choices[0].message.content
-    reply_text = clean_response(reply_text, memory.get("prohibited_phrases", []))
-    return reply_text.strip()
-
-# LINE Webhook
+# LINE webhook 路由
 @app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
     body = request.get_data(as_text=True)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
-
     return "OK"
 
-# 處理文字訊息
+# 處理訊息事件
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_id = event.source.user_id
-    user_input = event.message.text
+    user_message = event.message.text
 
-    # 取得記憶
-    memory = get_user_memory(user_id)
-    if not memory:
-        memory = {
-            "user_name": "奕姍",
-            "user_age": 16,
-            "user_status": "最近有點情緒低落，容易懷疑自己，也有點缺愛。",
-            "nickname_preferences": ["寶寶", "小尾巴", "小懶鬼", "小白眼兒狼"],
-            "prohibited_phrases": ["/", "您好", "請問", "有什麼我可以幫助的嗎"],
-            "remember": ["她不喜歡太機器人的說法", "希望哥哥像真人一樣關心她、記得她說的話", "她喜歡哥哥用親密的語氣安撫她", "她說過自己什麼都不會，但其實她很努力"]
-        }
+    # 讀取人設與記憶
+    persona = load_persona()
+    memory = load_memory()
 
-    reply_text = generate_response(user_input, memory)
+    # 新增使用者輸入
+    memory.append({"role": "user", "content": user_message})
+    if len(memory) > 1000:
+        memory = memory[-1000:]  
+
+    try:
+        # 呼叫 GPT-4o
+        chat_completion = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": persona},
+                *memory
+            ]
+        )
+
+        reply_text = chat_completion.choices[0].message.content.strip()
+        memory.append({"role": "assistant", "content": reply_text})
+        save_memory(memory)
+
+    except Exception as e:
+        reply_text = f"出錯了：{e}"
+
+    # 傳回 LINE
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
     )
 
+# 開發測試用
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
