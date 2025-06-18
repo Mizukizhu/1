@@ -38,7 +38,7 @@ def get_user_memory(user_id):
 def update_user_memory(user_id, new_data):
     memory = load_memory()
     memory[user_id] = new_data
-    save_memory(memory)ent（新版）
+    save_memory(memory)ent
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # 載入記憶
