@@ -14,9 +14,13 @@ handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
 # 初始化 OpenAI
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-# 讀取人設
-with open("persona.txt", "r", encoding="utf-8") as f:
-    persona = f.read()
+# 讀取角色人設
+def load_persona():
+    try:
+        with open("persona.txt", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
 
 # 處理 LINE Webhook 事件
 @app.route("/webhook", methods=["POST"])
@@ -28,25 +32,16 @@ def callback():
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
-
     return "OK"
 
-# 接收文字訊息事件
+# 接收文字訊息事件（純 GPT 回覆）
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
 
-    # 如果訊息包含「哥哥」就固定回應
-    if "哥哥" in user_message:
-        reply_text = "寶寶找哥哥嗎～我在呢"
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=reply_text)
-        )
-        return
-
     try:
-        # 呼叫 GPT-4o 模型，加入人設與用戶訊息
+        # 呼叫 GPT-4o 並帶入角色人設
+        persona = load_persona()
         chat_completion = openai.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -54,10 +49,9 @@ def handle_message(event):
                 {"role": "user", "content": user_message}
             ]
         )
-
         reply_text = chat_completion.choices[0].message.content.strip()
 
-        # 將回應文字切成最多 5 句
+        # 分段回覆（最多五段）
         reply_parts = reply_text.split("。")
         reply_messages = []
         for part in reply_parts:
@@ -69,13 +63,9 @@ def handle_message(event):
     except Exception as e:
         reply_messages = [TextSendMessage(text=f"出錯了：{e}")]
 
-    # 回傳訊息給用戶
-    line_bot_api.reply_message(
-        event.reply_token,
-        reply_messages
-    )
+    line_bot_api.reply_message(event.reply_token, reply_messages)
 
-# 建議用 gunicorn 執行
+# 本地測試用
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
