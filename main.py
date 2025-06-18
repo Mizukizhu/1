@@ -5,90 +5,80 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import openai
 import os
 import json
+import random
+from long_term_memory import load_user_memory, save_user_memory
 
 app = Flask(__name__)
 
-# LINE Bot 初始化
-line_bot_api = LineBotApi(os.environ.get("LINE_CHANNEL_ACCESS_TOKEN"))
-handler = WebhookHandler(os.environ.get("LINE_CHANNEL_SECRET"))
+# 環境變數
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
+LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
 
-# OpenAI 初始化
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+# 初始化
+line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(LINE_CHANNEL_SECRET)
+openai.api_key = OPENAI_API_KEY
 
-# 記憶檔案與人設檔案
-MEMORY_FILE = "memory.json"
-PERSONA_FILE = "persona.txt"
+# 記憶參數
+MEMORY_FILE = 'user_memory.json'
+MAX_MEMORY = 30  # 可修改記憶條數限制
 
-# 讀取人設檔案
-def load_persona():
-    try:
-        with open(PERSONA_FILE, "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "你是夏以昼，一位溫柔克制的哥哥，對妹妹奕姍有強烈保護欲。"
-
-# 讀取對話記憶
-def load_memory():
-    try:
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return []
-
-# 儲存對話記憶
-def save_memory(memory):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(memory, f, ensure_ascii=False, indent=2)
-
-# LINE webhook 路由
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=['POST'])
 def callback():
-    signature = request.headers["X-Line-Signature"]
+    signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
+
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
-    return "OK"
 
-# 處理訊息事件
+    return 'OK'
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_message = event.message.text
+    user_id = event.source.user_id
+    user_input = event.message.text.strip()
 
-    # 讀取人設與記憶
-    persona = load_persona()
-    memory = load_memory()
+    # 載入對話記憶
+    memory = load_user_memory(user_id, MEMORY_FILE)
 
-    # 新增使用者輸入
-    memory.append({"role": "user", "content": user_message})
-    if len(memory) > 1000:
-        memory = memory[-1000:]  
+    # 新訊息加入記憶（對話格式為角色扮演）
+    memory.append({"role": "user", "content": user_input})
 
+    # 組合人設與記憶
+    with open("persona.txt", "r", encoding="utf-8") as f:
+        persona = f.read()
+
+    messages = [{"role": "system", "content": persona}] + memory
+
+    # 呼叫 GPT 模型
     try:
-        # 呼叫 GPT-4o
-        chat_completion = openai.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": persona},
-                *memory
-            ]
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",  # 可改為你指定的模型
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.8,
         )
+        reply_text = response.choices[0].message.content.strip()
 
-        reply_text = chat_completion.choices[0].message.content.strip()
+        # 自動斷句成 3～5 句訊息
+        replies = reply_text.split("\n")
+        replies = [line.strip() for line in replies if line.strip()]
+        random.shuffle(replies)
+        replies = replies[:random.randint(3, 5)]
+        reply_messages = [TextSendMessage(text=line) for line in replies]
+
+        # 儲存記憶
         memory.append({"role": "assistant", "content": reply_text})
-        save_memory(memory)
+        save_user_memory(user_id, memory, MEMORY_FILE, max_memory=MAX_MEMORY)
+
+        # 回傳訊息
+        line_bot_api.reply_message(event.reply_token, reply_messages)
 
     except Exception as e:
-        reply_text = f"出錯了：{e}"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="哥哥這邊壞掉了，等等再來找我好不好～"))
 
-    # 傳回 LINE
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=reply_text)
-    )
-
-# 開發測試用
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run()
