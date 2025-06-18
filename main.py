@@ -59,7 +59,7 @@ def generate_response(user_input, memory):
     return reply_text.strip()
 
 # 接收 LINE 訊息
-@app.route("/callback", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def callback():
     signature = request.headers["X-Line-Signature"]
     body = request.get_data(as_text=True)
